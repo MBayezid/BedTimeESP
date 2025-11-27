@@ -1,0 +1,11 @@
+BedTimeESP.code-workspace
+.pio/
+.vscode/.browse.c*
+.vscode/c_cpp_properties.json
+.vscode/launch.json
+.vscode/ipch
+*.bin
+*.elf
+*.map
+.DS_Store
+Thumbs.db
