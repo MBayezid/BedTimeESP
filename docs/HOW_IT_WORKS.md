@@ -1,65 +1,147 @@
-# BedTimeESP – How It Works
-
-## Overview
-BedTimeESP is an ESP8266-based relay controller designed to automate switches via MQTT and HTTP.  
-It supports small-scale home automation projects, with optional expansion via I2C GPIO or ESP-12E boards for additional relays.
 
 ---
 
-## Hardware
+# HOW_IT_WORKS.md
 
-- **ESP-01 / ESP-12E**: Main controller
-- **ULN2803APG**: Relay driver and level shifter
-- **Relays**: 5V standard, controlled via GPIO through ULN2803
-- **Power Supply**:
-  - 5V DC for relays
-  - 3.3V DC for ESP-01 / I2C modules
-
-### Optional Expansion
-- I2C GPIO expander IC for additional relay channels
-- ESP-12E board for more GPIOs if needed
+**BedTimeESP System Architecture**
+**Version:** 1.0.0
+**Hardware Target:** ESP8266-01 / ESP-01S
+**Protocols:** HTTP / MQTT / mDNS
 
 ---
 
-## Firmware
+## 1. System Overview
 
-- Written in PlatformIO (C++ / Arduino framework)
-- Handles:
-  - Wi-Fi connectivity
-  - MQTT topics for relay control (`esp01/<id>/relay/<n>`)
-  - HTTP endpoints for manual toggle
-  - Serial configuration for basic parameters
+The firmware turns an ESP-01/ESP-12E into a network-enabled relay controller. It normally runs in WiFi client mode, falling back to AP mode if no known network is found.
 
----
+It provides:
 
-## Software Flow
-
-1. ESP connects to Wi-Fi
-2. Subscribes to MQTT topics
-3. Listens for HTTP requests
-4. Toggles relays via ULN2803
-5. Optional logging and debug over serial
+* A lightweight local web interface for control and configuration
+* Optional MQTT integration for automation
+* Predictable behavior aimed at stability, low footprint, and easy integration with common relay modules
 
 ---
 
-## Diagrams
+## 2. Hardware Abstraction Layer
 
-- **Block Diagram**: ESP → ULN2803 → Relays
-- **Schematic**: Shows connections of ESP, ULN2803, relays, power supply
-- **PCB Layout**: If applicable
+ESP-01 GPIO is limited, so the pin layout is kept minimal and practical while preserving serial output.
+
+| Component     | ESP Pin     | Function       | Notes                          |
+| ------------- | ----------- | -------------- | ------------------------------ |
+| Relay Output  | GPIO 3 (RX) | Relay Control  | Active LOW/HIGH (configurable) |
+| Status LED    | GPIO 2      | Built-in LED   | Active LOW                     |
+| Debug Output  | GPIO 1 (TX) | Serial Logging | TX-only logging, no RX input   |
+| Boot Mode Pin | GPIO 0      | Flash/Run      | Must remain HIGH at boot       |
+
+Using GPIO3 for the relay removes serial RX. That is intentional.
 
 ---
 
-## Usage Notes
+## 3. Operational Control Flow
 
-- Keep GPIO0 high at boot for ESP-01 to ensure stable startup
-- Use FTDI programmer for flashing
-- Expand GPIOs via I2C if more relays are needed
+### 3.1 Boot Sequence
+
+1. Initialize UART (TX-only).
+2. Configure GPIO pins.
+3. Load stored relay state and network config from EEPROM.
+4. Begin network handshake.
+
+### 3.2 Network Handshake
+
+**If stored WiFi credentials work:**
+
+* Device enters STA mode
+* mDNS service starts
+* MQTT attempts connection; if subscribed successfully, publishes status
+* LAN-only mode still works even if internet is unavailable
+
+**If WiFi connection fails:**
+
+* Device enters AP mode
+
+  * SSID: `ESP-Relay-Module`
+  * IP: `192.168.4.1`
+* Hosts configuration UI
 
 ---
 
-## References
-- PlatformIO documentation
-- ESP8266EX datasheet
-- ULN2803 datasheet
+## 4. Main Loop & Request Handling
 
+A synchronous HTTP server on port 80 provides all control functions.
+
+It handles:
+
+* WiFi reconnect attempts
+* HTTP routing
+* UI generation
+
+### Endpoints
+
+| Path        | Method | Action                                 |
+| ----------- | ------ | -------------------------------------- |
+| `/`         | GET    | Dashboard with state + control buttons |
+| `/ON`       | GET    | Turn relay ON and return to dashboard  |
+| `/OFF`      | GET    | Turn relay OFF and return to dashboard |
+| `/settings` | GET    | Configuration form                     |
+| `/save`     | GET    | Write config to EEPROM and reboot      |
+
+---
+
+## 5. EEPROM Layout
+
+256 bytes are reserved for all stored parameters.
+
+| Data        | Address | Length | Type                     |
+| ----------- | ------- | ------ | ------------------------ |
+| SSID        | 0       | 40     | char[]                   |
+| Password    | 40      | 30     | char[]                   |
+| IP Address  | 70      | 15     | char[]                   |
+| Subnet      | 85      | 15     | char[]                   |
+| Gateway     | 100     | 15     | char[]                   |
+| DNS         | 115     | 15     | char[]                   |
+| IP Type     | 130     | 1      | '1' = Static, '2' = DHCP |
+| Relay State | 131     | 1      | '1' = ON, '2' = OFF      |
+| mDNS Name   | 132     | 20     | char[]                   |
+
+---
+
+## 6. Network Architecture
+
+### 6.1 DHCP Mode (Default)
+
+The router assigns an IP.
+
+Access via:
+
+* Assigned IP
+* `http://<name>.local` (default: `myrelaycard.local`)
+
+### 6.2 Static IP Mode
+
+User specifies:
+
+* IP
+* Subnet
+* Gateway
+* DNS
+
+UI provides common placeholder values for clarity.
+
+---
+
+## 7. Security Considerations
+
+* AP mode is open (WPA2 planned for v1.1).
+* Credentials stored in plain EEPROM.
+* No web UI authentication.
+* Recommended: isolate IoT traffic on its own VLAN.
+
+---
+
+## 8. Troubleshooting
+
+* **Relay flickers at boot:** GPIO3 floats; some relay boards need a pull-up.
+* **AP mode unreachable:** ESP-01 needs a stable 3.3V supply with at least 500mA peak.
+* **WiFi issues:** ESP8266 supports only 2.4 GHz.
+
+---
