@@ -58,37 +58,84 @@ static const unsigned long STATE_WRITE_MIN = 5000UL; // min delay between EEPROM
 // HTML UI (ultra-compact for flash saving)
 // ============================================================================
 const char INDEX_HTML[] PROGMEM = R"rawliteral(
-<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>
-<title>Switch</title>
+<!doctype html>
+<html>
+<head>
+<meta name='viewport' content='width=device-width,initial-scale=1'>
+<title>Remote Switch</title>
 <style>
-body{font-family:Arial;margin:12px;}
-.card{max-width:420px;margin:auto;}
-button{width:100%;padding:12px;border:none;border-radius:6px;font-size:16px}
-.on{background:#4CAF50;color:#fff}
-.off{background:#F44336;color:#fff}
-.sm{font-size:13px;color:#666;text-align:center;margin-top:8px}
-</style></head><body>
+body{font-family:Arial;margin:12px;background:#f5f5f5}
+.card{max-width:420px;margin:auto;background:#fff;padding:16px;border-radius:8px}
+button,input{width:100%;padding:10px;margin-top:8px;font-size:15px}
+.on{background:#4CAF50;color:#fff;border:none}
+.off{background:#F44336;color:#fff;border:none}
+.cfg{background:#2196F3;color:#fff;border:none}
+label{font-size:13px;color:#444}
+.small{font-size:12px;color:#777;text-align:center;margin-top:10px}
+.hidden{display:none}
+</style>
+</head>
+
+<body>
 <div class='card'>
+
 <h2>Remote Switch</h2>
-<p>Status: <b id='st'>OFF</b></p>
-<button id='on' class='on'>Turn ON</button>
-<button id='off' class='off' style='margin-top:8px'>Turn OFF</button>
-<p class='sm'>If not on WiFi, connect to device AP → 192.168.4.1</p>
+
+<p>Status: <b id='st'>---</b></p>
+
+<button class='on' onclick="cmd('/on')">Turn ON</button>
+<button class='off' onclick="cmd('/off')">Turn OFF</button>
+
+<button class='cfg' onclick="toggleCfg()">Wi-Fi Settings</button>
+
+<div id="cfg" class="hidden">
+<hr>
+<form method="POST" action="/save">
+<label>Wi-Fi SSID</label>
+<input name="ssid" required>
+
+<label>Password</label>
+<input name="pass" type="password">
+
+<label>Device Name (optional)</label>
+<input name="host">
+
+<button type="submit">Save & Reboot</button>
+</form>
 </div>
+
+<p class='small'>
+If not connected, join device AP and open 192.168.4.1
+</p>
+
+</div>
+
 <script>
-async function f(p){try{await fetch(p);}catch(e){}}
-on.onclick=()=>{f('/on');setTimeout(s,300);}
-off.onclick=()=>{f('/off');setTimeout(s,300);}
-async function s(){
+function toggleCfg(){
+ let c=document.getElementById('cfg');
+ c.style.display = c.style.display==='none'?'block':'none';
+}
+
+async function cmd(p){
+ try{await fetch(p);}catch(e){}
+ setTimeout(update,300);
+}
+
+async function update(){
  try{
   let r=await fetch('/status');
   let j=await r.json();
-  st.textContent=j.state.toUpperCase();
+  document.getElementById('st').innerText=j.state.toUpperCase();
  }catch(e){}
 }
-s();
-</script></body></html>
+
+update();
+</script>
+
+</body>
+</html>
 )rawliteral";
+
 
 // ============================================================================
 // EEPROM HELPERS
