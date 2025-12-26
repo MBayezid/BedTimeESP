@@ -1,620 +1,731 @@
-Architecture doc, hardware wiring guide, UI mockup, PlatformIO project layout and a production-ready MQTT topic scheme — all tuned for an **ESP-01 (512 KB)** and your chosen infrastructure (EMQX Serverless broker + Namecheap shared hosting as remote portal). I kept the firmware single-file (fits 512K), focused on robustness, and avoided heavy extras that would kill the device in the field.
+# BedTimeESP - Production-Ready IoT Smart Relay
 
-Everything below is drop-in ready. Read, copy, flash, and don’t blame the hardware if you tie the relay directly to mains without proper protection.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Platform](https://img.shields.io/badge/platform-ESP8266-blue.svg)](https://www.espressif.com/en/products/socs/esp8266)
+[![Framework](https://img.shields.io/badge/framework-Arduino-00979D.svg)](https://www.arduino.cc/)
 
----
+Transform a low-cost ESP-01 (512KB) or ESP-12E module into a production-ready IoT smart relay with local and remote control capabilities. Features dual-mode WiFi (AP + STA), MQTT integration, web interface, and persistent state management.
 
-# ARCHITECTURE.md (Full Version)
-
-## Project: ESP-01 Smart Relay (512 KB Edition)
-
-### Purpose
-
-A minimal, resilient smart relay that:
-
-* Always offers local control (AP fallback).
-* Works over LAN (mDNS + web UI).
-* Works over Internet via MQTT (EMQX Serverless).
-* Recovers state across power cycles.
-* Fits and runs reliably on ESP-01 with 512 KB flash.
+![Project Banner](docs/images/banner.png)
 
 ---
 
-## System Overview (Logical)
+## 📋 Table of Contents
+
+- [Overview](#overview)
+- [Key Features](#key-features)
+- [Hardware Requirements](#hardware-requirements)
+- [Architecture](#architecture)
+- [Quick Start](#quick-start)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [MQTT Integration](#mqtt-integration)
+- [API Reference](#api-reference)
+- [Troubleshooting](#troubleshooting)
+- [Safety & Legal](#safety--legal)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
+
+## 🎯 Overview
+
+BedTimeESP is a minimal, resilient smart relay system designed for the ESP8266 platform. It provides both local and cloud-based control while maintaining reliability and fitting within the constraints of the ESP-01's 512KB flash memory.
+
+### Why BedTimeESP?
+
+- **Always Accessible**: AP fallback ensures local control even when WiFi is unavailable
+- **Dual Control**: Local web UI + remote MQTT control
+- **Persistent State**: Survives power cycles with EEPROM storage
+- **Production Ready**: Robust error handling, LWT (Last Will and Testament), heartbeat monitoring
+- **Minimal Footprint**: Optimized for ESP-01 (512KB) but scalable to larger boards
+- **Open Protocol**: Standard MQTT topics for easy integration
+
+---
+
+## ✨ Key Features
+
+### Core Functionality
+- ✅ **Dual WiFi Mode**: Station (STA) + Access Point (AP) with automatic fallback
+- ✅ **Local Web Interface**: Responsive mobile-first UI accessible via mDNS
+- ✅ **MQTT Integration**: Full pub/sub with retained messages and LWT support
+- ✅ **State Persistence**: EEPROM storage for configuration and relay state
+- ✅ **Zero-Config Discovery**: mDNS advertising (`hostname.local`)
+- ✅ **Heartbeat Monitoring**: Periodic status updates for health checking
+
+### Technical Highlights
+- 🔒 **Safe Writes**: Throttled EEPROM writes (5-second minimum interval)
+- 🔄 **Automatic Recovery**: WiFi reconnection and AP fallback
+- 📊 **Memory Management**: Heap monitoring with automatic AP shutdown
+- 🎛️ **RESTful API**: Simple HTTP endpoints for integration
+- 📡 **OTA Ready**: Supports over-the-air updates (ESP-12E+)
+
+---
+
+## 🛠️ Hardware Requirements
+
+### Minimum Components
+
+| Component | Specification | Notes |
+|-----------|--------------|-------|
+| **Microcontroller** | ESP-01 (512KB) or ESP-12E/F | ESP-01 for minimal build, ESP-12E for extended features |
+| **Relay Module** | 3.3V or 5V, optoisolated | Must support 3.3V trigger or use transistor driver |
+| **Power Supply** | 3.3V @ 500mA | AMS1117-3.3 or better LDO regulator |
+| **Transistor** | 2N2222 or BC337 (if 5V relay) | With 1kΩ base resistor |
+| **Diode** | 1N4007 (flyback) | Protection for relay coil |
+| **Capacitors** | 10µF electrolytic + 0.1µF ceramic | Decoupling near ESP VCC/GND |
+
+### Optional Components
+- 5V relay board with built-in optocoupler
+- Screw terminals for mains connections
+- Fuses and circuit breakers (required for mains)
+- IP-rated enclosure
+- Ferrite beads for EMI suppression
+
+### Wiring Diagram
 
 ```
-User (Android/iOS app or browser)
-  ↕ (MQTT over internet)         ↕ (HTTP or mDNS local)
-EMQX Serverless (cloud broker)   Router/LAN
-           ↕                         ↕
-         Internet                ESP-01 (STA + optional AP)
-                                     ├─ PubSub MQTT client
-                                     ├─ Tiny HTTP server (control + setup UI)
-                                     ├─ EEPROM config (WiFi + state)
-                                     └─ Relay driver (GPIO)
+┌─────────────────────────────────────────────────┐
+│                  Power Section                   │
+│  AC/DC 5V ─► AMS1117-3.3 ─► ESP-01 VCC         │
+│                    │                             │
+│                    └─► 10µF + 0.1µF caps        │
+└─────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────┐
+│              Relay Control Section               │
+│  ESP GPIO2 ──[1kΩ]─► 2N2222 Base               │
+│                      Collector ─► Relay Coil─   │
+│                      Emitter ─► GND             │
+│                                                  │
+│  [1N4007 Diode across relay coil]               │
+│  Cathode (+5V) ←─ Anode (Collector)             │
+└─────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────┐
+│               Mains Section (⚠️)                 │
+│  Live ──► [Fuse] ──► Relay COM                  │
+│  Relay NO ──► Load ──► Neutral                  │
+│  Earth ──────────────► Load Earth               │
+└─────────────────────────────────────────────────┘
 ```
 
----
-
-## Components
-
-### Firmware (single-file `main.cpp`)
-
-* WiFi AP + STA provisioning / fallback.
-* Tiny HTTP server (UI + REST endpoints).
-* PubSubClient MQTT (retain/LWT/heartbeat).
-* EEPROM storage for WiFi creds + last relay state.
-* Relay driver (debounce & write-throttle).
-* mDNS advertising (hostname.local).
-
-### Hardware
-
-* ESP-01 module (512 KB)
-* 3.3V regulator (low-drop, capable of 300–500 mA)
-* Relay module (3.3V input or transistor driver + optocoupler)
-* Flyback diode / snubber for inductive loads
-* Proper mains wiring, enclosure, and grounding
-
-### Services
-
-* **Broker:** EMQX Serverless (recommended for free tier)
-* **Remote Web Portal (optional):** Namecheap shared hosting (publish status/dashboard from the broker or via simple webhook)
+> ⚠️ **DANGER**: Mains voltage can be lethal. See [Safety & Legal](#safety--legal) section.
 
 ---
 
-## Boot & Run Flow
-
-1. **Boot** → read EEPROM config (magic + version + stored SSID/pass + hostname + apFallback)
-2. **STA attempt** (short timeout 8–12s)
-
-   * success → start mDNS and local web server; optionally keep AP if `apFallback = true` and heap allows
-   * fail → start AP mode and setup portal at `192.168.4.1`
-3. **User config** via AP portal → save SSID, password, hostname → reboot
-4. After STA connected → try MQTT connect (LWT set). If connected, publish retained status and heartbeat.
-5. Local control is always available through:
-
-   * AP portal at `192.168.4.1` (if AP running)
-   * LAN UI at `http://<hostname>.local` (mDNS) or `http://<sta-ip>`
-6. Relay state persists; updates stored on change with throttle.
-
----
-
-## Data & Storage
-
-* **EEPROM layout (bytes approximate)**:
-
-  * byte 0 — magic/version
-  * 1..31 — hostname (max 32)
-  * 33..64 — SSID (max 32)
-  * 97..160 — password (max 64)
-  * flag byte — apFallback
-  * final byte — lastRelayState
-
-* **Storage policy**:
-
-  * Write only on real changes.
-  * Throttle writes (min 5 sec between writes).
-  * Validate before accepting config (not blank SSID).
-
----
-
-## Concurrency & Memory Strategy
-
-* Keep single-file compile to reduce overhead (fits 512KB).
-* Avoid LittleFS/SPIFFS (too heavy).
-* Keep JSON small (`StaticJsonDocument` with modest capacity).
-* Keep TLS off by default (use `setInsecure()` only for demo). TLS will likely push heap too low on 512 KB devices.
-* Monitor `ESP.getFreeHeap()` and disable AP fallback when dangerously low.
-
----
-
-## Security Notes (minimum)
-
-* AP uses temporary password; consider randomizing per-device for production.
-* Avoid exposing config endpoints to WAN on shared hosting—use broker as messaging gateway.
-* For production cloud MQTT, use secure broker and TLS on a device with more RAM (ESP12/ESP32 recommended).
-
----
-
-# Hardware Wiring Guide (Full)
-
-> Safety first. If you’re not competent with mains wiring, hire an electrician.
-
-## Recommended BOM (minimum)
-
-* ESP-01 module (512 KB)
-* Relay module (ideally 3.3V trigger, opto-isolated) or
-
-  * Relay coil + transistor driver: 2N2222 / BC337 + base resistor + flyback diode (1N4007)
-* 3.3V regulator (AMS1117-3.3 or better; prefer LDO with low noise)
-* 5V supply (if using a 5V relay board)
-* Decoupling capacitors: 10 µF electrolytic + 0.1 µF ceramic near ESP VCC/GND
-* Logic-level MOSFET or transistor as driver (if relay board expects 5V)
-* Screw terminals for mains
-* Fuses and earth for safety
-* Enclosure with IP rating for environment
-* Ferrite beads for EMI suppression (optional)
-
-## Wiring Diagram (textual)
-
-Assume relay coil is driven at 5V, with transistor driver:
+## 🏗️ Architecture
 
 ```
-Mains Live ----> Relay COM
-Relay NO -----> Load
-Load -----> Mains Neutral
-
-ESP-01:
-  VCC (3.3V) -> 3.3V regulator output
-  GND -> common ground with regulator and relay driver ground
-
-Relay driver (transistor):
-  ESP GPIO2 -----[1k resistor]----> Base of NPN (2N2222)
-  Emitter -> GND
-  Collector -> Relay coil negative (other side to +5V)
-  Flyback diode across relay coil (cathode to +5V, anode to transistor collector)
+┌────────────────────────────────────────────────────┐
+│                    User Clients                     │
+│  ┌─────────────┐        ┌─────────────┐           │
+│  │   Browser   │        │  MQTT App   │           │
+│  │  (Local)    │        │  (Remote)   │           │
+│  └──────┬──────┘        └──────┬──────┘           │
+└─────────┼────────────────────────┼─────────────────┘
+          │                        │
+          │ HTTP/mDNS              │ MQTT
+          ▼                        ▼
+┌─────────────────┐      ┌──────────────────┐
+│  LAN Router     │◄────►│  EMQX Broker     │
+│  192.168.x.x    │      │  (Cloud/Self)    │
+└────────┬────────┘      └──────────────────┘
+         │                        │
+         │ WiFi (STA)             │ TLS (optional)
+         ▼                        ▼
+┌─────────────────────────────────────────────┐
+│           ESP8266 Smart Relay               │
+│  ┌─────────────────────────────────────┐   │
+│  │  WiFi Stack (STA + AP)              │   │
+│  ├─────────────────────────────────────┤   │
+│  │  • HTTP Server (Port 80)            │   │
+│  │  • MQTT Client (PubSubClient)       │   │
+│  │  • mDNS Responder                   │   │
+│  │  • EEPROM Manager                   │   │
+│  ├─────────────────────────────────────┤   │
+│  │  Application Logic                  │   │
+│  │  • State Machine                    │   │
+│  │  • Relay Driver (GPIO2)             │   │
+│  │  • Heartbeat Timer                  │   │
+│  └─────────────────────────────────────┘   │
+│              ┌──────────┐                   │
+│              │  EEPROM  │ (Persistent)      │
+│              └──────────┘                   │
+└─────────────────────────────────────────────┘
+         │
+         ▼
+    [RELAY MODULE] ──► LOAD
 ```
 
-If using a 3.3V relay board:
+### Boot Sequence
 
-* Connect relay VCC to 3.3V
-* Connect relay IN pin to ESP GPIO2 (optionally via 1k resistor)
-* Always check relay module board docs — many boards contain opto-isolators.
-
-### Important electrical rules
-
-* Keep mains wiring and low-voltage electronics physically separated.
-* Use fuses on the mains side of the relay.
-* Use an isolated power supply if possible.
-* Provide strain relief for incoming mains wires.
-* Consider snubber networks or RC across contacts if switching inductive loads.
-
-## PCB and Layout tips
-
-* Place decoupling caps close to ESP VCC and regulator.
-* Use ground plane where possible.
-* Keep trace width for mains appropriately rated.
-* Keep relay coil traces away from ESP antenna area if possible.
-
-## Thermal & Environmental
-
-* Provide ventilation or heat-sinking for regulator and relay if loaded.
-* Use IP-rated enclosure for outdoor/dusty environments.
-* Avoid plastic enclosures that trap heat around the ESP and regulator.
+1. **Initialize** → Load config from EEPROM (WiFi credentials, hostname, last state)
+2. **Restore State** → Apply last relay state from persistent storage
+3. **WiFi Connect** → Attempt STA connection (8-12 second timeout)
+   - ✅ Success → Start web server + mDNS + MQTT client
+   - ❌ Failure → Start AP mode at `192.168.4.1`
+4. **Service Loop** → Handle web requests, MQTT messages, heartbeats
 
 ---
 
-# UI Mock-up / HTML Template
+## 🚀 Quick Start
 
-Minimal, mobile-first UI that fits into the firmware (inline HTML). Paste into firmware strings or serve directly from C strings.
+### 1. Clone the Repository
 
-```html
-<!-- minimal UI: fits directly into ESP string literals -->
-<!doctype html>
-<html>
-<head>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Smart Relay</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 12px; }
-    .card{ max-width:420px; margin:auto; padding:16px; border-radius:8px; box-shadow: 0 2px 6px rgba(0,0,0,.12); }
-    button{ width:100%; padding:14px; border:none; border-radius:6px; font-size:16px; }
-    .on{ background:#4CAF50; color:#fff; }
-    .off{ background:#F44336; color:#fff; }
-    .small{ font-size:13px; color:#666; margin-top:8px; display:block; text-align:center; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h2>Remote Switch</h2>
-    <p>Status: <strong id="status">OFF</strong></p>
-    <button id="btnOn" class="on">Turn ON</button>
-    <button id="btnOff" class="off" style="margin-top:8px">Turn OFF</button>
-    <p class="small">If not connected to WiFi, connect your phone to device AP and open 192.168.4.1</p>
-  </div>
-  <script>
-    async function doFetch(path, opts) {
-      try {
-        const res = await fetch(path, opts);
-        return res.json ? await res.json() : null;
-      } catch(e) { return null; }
-    }
-    async function updateStatus(){
-      const st = await doFetch('/status');
-      if(st && st.state) document.getElementById('status').textContent = st.state.toUpperCase();
-    }
-    document.getElementById('btnOn').onclick = async ()=>{ await doFetch('/on'); updateStatus(); };
-    document.getElementById('btnOff').onclick = async ()=>{ await doFetch('/off'); updateStatus(); };
-    updateStatus();
-  </script>
-</body>
-</html>
+```bash
+git clone https://github.com/MBayezid/BedTimeESP.git
+cd BedTimeESP
 ```
 
-Notes:
+### 2. Install PlatformIO
 
-* Keep JS tiny, fetch to `/on`, `/off`, `/status`.
-* For production, embed this string in firmware as a PROGMEM literal to save RAM.
+```bash
+# Using pip
+pip install platformio
 
----
-
-# PlatformIO Project (professional but 512K-friendly)
-
-## Folder structure (recommended)
-
-```
-/project-root
-  /src
-    main.cpp         <-- single-file optimized firmware (below)
-  platformio.ini
-  README.md
+# Or using VSCode extension
+# Install "PlatformIO IDE" from VSCode marketplace
 ```
 
-## platformio.ini (copy)
+### 3. Configure Settings
 
-```ini
-[env:esp01_512k]
-platform = espressif8266
-board = esp01_1m
-framework = arduino
-
-board_build.flash_mode = dout
-upload_speed = 115200
-monitor_speed = 115200
-
-build_flags =
-  -D MQTT_MAX_PACKET_SIZE=512
-  -D PIO_FRAMEWORK_ARDUINO_LWIP2_HIGHER_BANDWIDTH
-  -D NDEBUG
-
-lib_deps =
-  knolleary/PubSubClient @ ^2.8
-  bblanchon/ArduinoJson @ ^6.21.5
-```
-
-Notes:
-
-* Use `esp01_1m` board (fits 512K). Keep everything minimal.
-* Do not add large libraries or files into `data/` — avoid SPIFFS/LittleFS.
-
----
-
-# main.cpp (single-file firmware — drop-in)
-
-This is the pragmatic 512k-ready single-file sketch with AP/STA, tiny web UI, EEPROM config storage, MQTT publish using correct types, heartbeat, and safe memory use.
-
-> Paste this into `src/main.cpp` in the PlatformIO project.
+Edit `src/main.cpp` and update these values:
 
 ```cpp
-// main.cpp - ESP-01 (512KB) single-file optimized firmware
-#include <Arduino.h>
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
-#include <ESP8266mDNS.h>
-#include <PubSubClient.h>
-#include <EEPROM.h>
-#include <ArduinoJson.h>
-
-// ---------- CONFIG ----------
-#define EEPROM_SIZE 256
-#define MAGIC_ADDR 0
-#define MAGIC_VAL 0xA5
-#define HOST_ADDR 1      // 32 bytes
-#define SSID_ADDR 33     // 32 bytes
-#define PASS_ADDR 65     // 64 bytes
-#define APF_ADDR 129     // 1 byte
-#define STATE_ADDR 130   // 1 byte
-
-const uint8_t RELAY_PIN = 2; // GPIO2 default
-
-// MQTT / Topics
-char mqttServer[64] = "broker.emqx.io";
+// MQTT Broker Configuration
+char mqttServer[64] = "broker.emqx.io";  // Your broker
 uint16_t mqttPort = 1883;
+
+// Device Topics (customize per device)
 const char* PUB_TOPIC = "home/switch/status";
 const char* SUB_TOPIC = "home/switch/control";
-const char* LWT_TOPIC = "home/switch/alert";
-const char* HB_TOPIC  = "home/switch/heartbeat";
+```
 
-// Globals
-char hostnameLocal[32] = "remoteswitch";
-char storedSSID[32] = "";
-char storedPASS[64] = "";
-bool apFallback = true;
-int relayState = 0;
+### 4. Build and Upload
 
-ESP8266WebServer web(80);
-WiFiClient espClient;
-PubSubClient mqtt(espClient);
+```bash
+# Build firmware
+pio run -e esp01_512k
 
-unsigned long lastHeartbeat = 0;
-const unsigned long HB_INTERVAL = 30000UL;
-unsigned long lastStateWrite = 0;
-const unsigned long STATE_WRITE_MIN = 5000UL; // throttle writes
+# Upload via serial (connect ESP-01 to USB-TTL adapter)
+pio run -e esp01_512k --target upload
 
-// minimal UI page (small)
-const char INDEX_HTML[] PROGMEM = R"rawliteral(
-<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><title>Switch</title>
-<style>body{font-family:Arial;margin:12px}.card{max-width:420px;margin:auto}button{width:100%;padding:12px;border:none;border-radius:6px;font-size:16px}.on{background:#4CAF50;color:#fff}.off{background:#F44336;color:#fff}.sm{font-size:13px;color:#666;text-align:center;margin-top:8px}</style>
-</head><body><div class='card'><h2>Remote Switch</h2><p>Status: <b id='st'>OFF</b></p><button id='on' class='on'>Turn ON</button><button id='off' class='off' style='margin-top:8px'>Turn OFF</button><p class='sm'>If not on WiFi, connect to device AP & open 192.168.4.1</p></div>
-<script>
-async function f(p){try{await fetch(p);}catch(e){}}
-document.getElementById('on').onclick=()=>{f('/on');setTimeout(s,300)};
-document.getElementById('off').onclick=()=>{f('/off');setTimeout(s,300)};
-async function s(){try{let r=await fetch('/status');let j=await r.json();document.getElementById('st').textContent=j.state.toUpperCase();}catch(e){}}
-s();
-</script></body></html>)rawliteral";
+# Monitor serial output
+pio device monitor
+```
 
-// ---------- EEPROM helpers ----------
-void eWriteStr(int addr, const char* s, int len) {
-  for (int i=0;i<len;i++) EEPROM.write(addr+i, (i < strlen(s)) ? s[i] : 0);
-}
-void eReadStr(int addr, char* buf, int len) {
-  for (int i=0;i<len;i++) { buf[i] = EEPROM.read(addr+i); if (buf[i]==0) { buf[i+1]=0; break; } }
-  buf[len-1]=0;
-}
-void loadConfig() {
-  EEPROM.begin(EEPROM_SIZE);
-  if (EEPROM.read(MAGIC_ADDR) != MAGIC_VAL) {
-    // defaults
-    eWriteStr(HOST_ADDR, hostnameLocal, 32);
-    eWriteStr(SSID_ADDR, "", 32);
-    eWriteStr(PASS_ADDR, "", 64);
-    EEPROM.write(APF_ADDR, apFallback ? 1 : 0);
-    EEPROM.write(STATE_ADDR, relayState ? 1 : 0);
-    EEPROM.write(MAGIC_ADDR, MAGIC_VAL);
-    EEPROM.commit();
-  }
-  eReadStr(HOST_ADDR, hostnameLocal, 32);
-  eReadStr(SSID_ADDR, storedSSID, 32);
-  eReadStr(PASS_ADDR, storedPASS, 64);
-  apFallback = EEPROM.read(APF_ADDR) == 1;
-  relayState = EEPROM.read(STATE_ADDR) == 1 ? 1 : 0;
-}
-void saveConfigWiFi(const char* ssid, const char* pass, const char* host) {
-  eWriteStr(SSID_ADDR, ssid, 32);
-  eWriteStr(PASS_ADDR, pass, 64);
-  eWriteStr(HOST_ADDR, host, 32);
-  EEPROM.commit();
-  // reload into RAM
-  eReadStr(HOST_ADDR, hostnameLocal, 32);
-  eReadStr(SSID_ADDR, storedSSID, 32);
-  eReadStr(PASS_ADDR, storedPASS, 64);
-}
-void saveRelayState(int s) {
-  unsigned long now = millis();
-  if (now - lastStateWrite < STATE_WRITE_MIN) return;
-  EEPROM.write(STATE_ADDR, s ? 1 : 0);
-  EEPROM.commit();
-  lastStateWrite = now;
-}
+### 5. Initial Setup
 
-// ---------- Relay ----------
-void applyRelay(int s) {
-  relayState = s ? 1 : 0;
-  digitalWrite(RELAY_PIN, relayState ? HIGH : LOW);
-  saveRelayState(relayState);
-}
+1. Device boots in AP mode: `RS-<CHIP_ID>`
+2. Connect your phone to this network (password: `12345678`)
+3. Open browser to `http://192.168.4.1`
+4. Enter your WiFi credentials
+5. Device reboots and connects to your network
+6. Access via `http://<hostname>.local` or IP address
 
-// ---------- Web handlers ----------
-void handleRoot() { web.send_P(200, "text/html", INDEX_HTML); }
-void handleOn()  { applyRelay(1); web.sendHeader("Location", "/", true); web.send(302, "text/plain", ""); }
-void handleOff() { applyRelay(0); web.sendHeader("Location", "/", true); web.send(302, "text/plain", ""); }
-void handleStatus(){
-  StaticJsonDocument<128> doc;
-  doc["switch"] = 1;
-  doc["state"] = relayState ? "on" : "off";
-  char buf[128]; size_t n = serializeJson(doc, buf);
-  web.send(200, "application/json", String(buf));
-}
-void handleSave() {
-  // POST from AP portal: ssid, pass, host
-  String s = web.arg("ssid");
-  String p = web.arg("pass");
-  String h = web.arg("host");
-  if (s.length()>0) {
-    saveConfigWiFi(s.c_str(), p.c_str(), h.length()?h.c_str():hostnameLocal);
-    web.send(200, "text/html", "<html><body>Saved. Rebooting...<script>setTimeout(()=>location.reload(),1500)</script></body></html>");
-    delay(500); ESP.restart();
-  } else {
-    web.send(400, "text/plain", "Missing SSID");
-  }
-}
+---
 
-// ---------- MQTT ----------
-void mqttCallback(char* topic, byte* payload, unsigned int len) {
-  StaticJsonDocument<200> doc;
-  DeserializationError err = deserializeJson(doc, payload, len);
-  if (err) return;
-  if (!doc.containsKey("switch") || !doc.containsKey("command")) return;
-  int sw = doc["switch"];
-  const char* cmd = doc["command"];
-  if (sw != 1) return;
-  if (strcasecmp(cmd, "on")==0) applyRelay(1);
-  else if (strcasecmp(cmd, "off")==0) applyRelay(0);
-}
-void mqttReconnect() {
-  if (mqtt.connected()) return;
-  String clientId = String("rs-") + String(ESP.getChipId(), HEX);
-  String lwt = clientId + " lost";
-  mqtt.setServer(mqttServer, mqttPort);
-  mqtt.setCallback(mqttCallback);
-  if (mqtt.connect(clientId.c_str(), nullptr, nullptr, LWT_TOPIC, 1, true, lwt.c_str())) {
-    mqtt.subscribe(SUB_TOPIC);
-    // publish retained status
-    StaticJsonDocument<120> doc; doc["switch"]=1; doc["state"]=relayState?"on":"off"; doc["success"]=true;
-    char buf[120]; size_t n = serializeJson(doc, buf);
-    mqtt.publish(PUB_TOPIC, (const uint8_t*)buf, n, true);
-  }
-}
+## 📦 Installation
 
-// ---------- Setup/AP/STA ----------
-String apName() { return String("RS-") + String(ESP.getChipId(), HEX); }
-void startAP() {
-  WiFi.mode(WIFI_AP);
-  WiFi.softAPConfig(IPAddress(192,168,4,1), IPAddress(192,168,4,1), IPAddress(255,255,255,0));
-  String ssid = apName();
-  WiFi.softAP(ssid.c_str(), "12345678");
-}
-void tryStartSTA() {
-  if (strlen(storedSSID) < 2) return;
-  WiFi.mode(WIFI_STA);
-  WiFi.hostname(hostnameLocal);
-  WiFi.begin(storedSSID, storedPASS);
-}
+### Hardware Setup
 
-// ---------- Setup ----------
-void setup() {
-  pinMode(RELAY_PIN, OUTPUT);
-  digitalWrite(RELAY_PIN, LOW);
+Detailed wiring guides available in [`docs/hardware-setup.md`](docs/hardware-setup.md)
 
-  Serial.begin(115200);
-  delay(50);
-  loadConfig();
-  applyRelay(relayState); // restore state
+**Basic ESP-01 Connection:**
 
-  // web endpoints
-  web.on("/", HTTP_GET, handleRoot);
-  web.on("/on", HTTP_GET, handleOn);
-  web.on("/off", HTTP_GET, handleOff);
-  web.on("/status", HTTP_GET, handleStatus);
-  web.on("/save", HTTP_POST, handleSave);
-  web.begin();
+| ESP-01 Pin | Connect To |
+|------------|------------|
+| VCC | 3.3V (regulated) |
+| GND | Common ground |
+| GPIO0 | HIGH for normal boot, LOW for programming |
+| GPIO2 | Relay control via transistor |
+| CH_PD | 3.3V (HIGH) |
+| TX/RX | USB-TTL adapter for programming |
 
-  // Attempt STA
-  bool staOk = false;
-  if (strlen(storedSSID) > 1) {
-    tryStartSTA();
-    unsigned long start = millis();
-    while (millis() - start < 10000UL) {
-      if (WiFi.status() == WL_CONNECTED) { staOk = true; break; }
-      web.handleClient();
-      delay(200);
-    }
-  }
+**Programming Mode:**
+- GPIO0 → GND (during power-up)
+- GPIO2 → HIGH (via 10kΩ pullup)
+- CH_PD → HIGH (via 10kΩ pullup)
 
-  if (!staOk) {
-    startAP(); // provisioning + local control
-    Serial.println("AP mode. Connect to: " + apName());
-  } else {
-    Serial.print("STA IP: "); Serial.println(WiFi.localIP());
-    if (MDNS.begin(hostnameLocal)) Serial.println("mDNS ready");
-    if (apFallback && ESP.getFreeHeap() > 12000) startAP();
-  }
+### Software Installation
 
-  // Setup MQTT (non-TLS by default for 512K)
-  mqtt.setClient(espClient);
-}
+#### Option A: PlatformIO (Recommended)
 
-// ---------- Loop ----------
-void loop() {
-  web.handleClient();
+1. Open project in VSCode with PlatformIO extension
+2. Select environment: `esp01_512k` or `esp12e`
+3. Click "Build" → "Upload"
 
-  if (WiFi.status() == WL_CONNECTED) {
-    if (!mqtt.connected()) mqttReconnect();
-    else mqtt.loop();
-  }
+#### Option B: Arduino IDE
 
-  if (millis() - lastHeartbeat > HB_INTERVAL) {
-    if (mqtt.connected()) {
-      StaticJsonDocument<120> doc; doc["id"]=String(ESP.getChipId(), HEX); doc["uptime"]=millis()/1000;
-      char buf[120]; size_t n = serializeJson(doc, buf);
-      mqtt.publish(HB_TOPIC, (const uint8_t*)buf, n, true);
-    }
-    lastHeartbeat = millis();
-  }
+1. Install ESP8266 board support:
+   - File → Preferences → Additional Board URLs:
+   - `http://arduino.esp8266.com/stable/package_esp8266com_index.json`
+2. Install libraries:
+   - PubSubClient (by Nick O'Leary)
+   - ArduinoJson (v6.21.5+)
+3. Select board: Tools → Board → Generic ESP8266 Module
+4. Configure:
+   - Flash Size: 512KB (for ESP-01)
+   - Upload Speed: 115200
+5. Upload sketch
 
-  // heap safety: disable AP fallback if dangerously low
-  if (ESP.getFreeHeap() < 10000 && apFallback) {
-    apFallback = false;
-    EEPROM.write(APF_ADDR, 0);
-    EEPROM.commit();
-    WiFi.softAPdisconnect(true);
-  }
+---
 
-  delay(2);
-}
+## ⚙️ Configuration
+
+### EEPROM Memory Map
+
+| Address | Size | Content | Default |
+|---------|------|---------|---------|
+| 0 | 1 byte | Magic value (0xA5) | 0xA5 |
+| 1-32 | 32 bytes | Hostname | "remoteswitch" |
+| 33-64 | 32 bytes | WiFi SSID | "" (empty) |
+| 65-128 | 64 bytes | WiFi Password | "" (empty) |
+| 129 | 1 byte | AP Fallback flag | 1 (enabled) |
+| 130 | 1 byte | Last Relay State | 0 (OFF) |
+
+### WiFi Configuration
+
+**Via AP Portal:**
+1. Connect to device AP: `RS-<CHIP_ID>`
+2. Navigate to `http://192.168.4.1`
+3. Submit configuration form:
+   - SSID: Your network name
+   - Password: Your network password
+   - Hostname: Custom hostname (optional)
+
+**Via Code (before compilation):**
+```cpp
+// In setup() function
+strcpy(storedSSID, "YourNetworkName");
+strcpy(storedPASS, "YourPassword");
+strcpy(hostnameLocal, "bedroom-switch");
+```
+
+### MQTT Topics
+
+**Default Topic Structure:**
+```
+home/switch/<device_id>/control   ← Subscribe (commands)
+home/switch/<device_id>/status    ← Publish (state)
+home/switch/<device_id>/heartbeat ← Publish (health)
+home/switch/<device_id>/alert     ← LWT topic
+```
+
+**Customize Topics:**
+```cpp
+const char* PUB_TOPIC = "home/bedroom/relay/status";
+const char* SUB_TOPIC = "home/bedroom/relay/control";
+const char* HB_TOPIC = "home/bedroom/relay/heartbeat";
+const char* LWT_TOPIC = "home/bedroom/relay/lwt";
 ```
 
 ---
 
-# Production-ready MQTT Topic Naming Scheme
+## 📖 Usage
 
-Design goals: clarity, uniqueness, per-device isolation, support multi-device setups, and retained state.
+### Local Control
 
-**Topic hierarchy template**
+**Web Interface:**
+- Access via mDNS: `http://remoteswitch.local`
+- Or direct IP: `http://192.168.1.xxx`
+- Mobile-optimized responsive design
+- Buttons: Turn ON / Turn OFF
+- Real-time status display
 
+**HTTP API:**
+```bash
+# Turn relay ON
+curl http://remoteswitch.local/on
+
+# Turn relay OFF
+curl http://remoteswitch.local/off
+
+# Get status
+curl http://remoteswitch.local/status
+# Response: {"switch":1,"state":"on"}
 ```
-<org>/<site>/<device_type>/<device_id>/<channel>/<action>
+
+### Remote Control (MQTT)
+
+**Control Command:**
+```json
+// Publish to: home/switch/<device_id>/control
+{
+  "switch": 1,
+  "command": "on"  // or "off"
+}
 ```
 
-**Practical mapping for your relay**
+**Status Updates (retained):**
+```json
+// Published to: home/switch/<device_id>/status
+{
+  "switch": 1,
+  "state": "on",
+  "success": true
+}
+```
 
-* `home/<house_id>/switch/<device_id>/control`
+**Heartbeat:**
+```json
+// Published to: home/switch/<device_id>/heartbeat
+{
+  "id": "rs-1a2b3c",
+  "uptime": 7200  // seconds
+}
+```
 
-  * Client publishes commands (JSON): `{"switch":1,"command":"on"}`
-  * Server/broker -> device subscribes
+### Integration Examples
 
-* `home/<house_id>/switch/<device_id>/status`
+**Node-RED Flow:**
+```json
+[
+  {
+    "type": "mqtt in",
+    "topic": "home/switch/+/status",
+    "broker": "your-broker"
+  },
+  {
+    "type": "mqtt out",
+    "topic": "home/switch/rs-xxx/control",
+    "payload": "{\"switch\":1,\"command\":\"on\"}"
+  }
+]
+```
 
-  * Device publishes status retained: `{"switch":1,"state":"on","success":true}`
-
-* `home/<house_id>/switch/<device_id>/heartbeat`
-
-  * Device publishes periodic heartbeat (retained optional)
-
-* `home/<house_id>/switch/<device_id>/lwt`
-
-  * Broker LWT topic for unexpected disconnects
-
-**Examples**
-
-* Subscribe: `home/house123/switch/rs-1A2B3C/control`
-* Publish retained status: `home/house123/switch/rs-1A2B3C/status`
-* Heartbeat: `home/house123/switch/rs-1A2B3C/heartbeat`
-
-**Payload Examples**
-
-* Command: `{"switch":1,"command":"on"}`
-* Status (retained): `{"switch":1,"state":"on","success":true,"ts":1670000000}`
-* Heartbeat: `{"id":"rs-1A2B3C","uptime":7200}`
-
-**Best practices**
-
-* Use device MAC or chip ID suffix as `device_id` to ensure uniqueness.
-* Use retained messages for `status` so clients joining late get current state.
-* Use LWT with `offline` payload populated on connect.
-* Implement rate-limiting server-side or device-side for `control` to prevent floods.
-* Use ACLs on EMQX to limit publish/subscribe scope for each client.
+**Home Assistant:**
+```yaml
+switch:
+  - platform: mqtt
+    name: "Bedroom Switch"
+    state_topic: "home/switch/rs-xxx/status"
+    command_topic: "home/switch/rs-xxx/control"
+    payload_on: '{"switch":1,"command":"on"}'
+    payload_off: '{"switch":1,"command":"off"}'
+    state_on: '"state":"on"'
+    state_off: '"state":"off"'
+    availability_topic: "home/switch/rs-xxx/heartbeat"
+    availability_template: "{{ 'online' if value_json.uptime else 'offline' }}"
+```
 
 ---
 
-# Notes about EMQX Serverless and Namecheap Hosting
+## 🔌 MQTT Integration
 
-## EMQX Serverless
+### Broker Setup
 
-* Good free-tier broker for prototyping. Create a project & provide credentials to device.
-* Use secure credentials; store on device in EEPROM.
-* Configure ACLs so devices can only subscribe/publish to their own topics.
+**Recommended: EMQX Serverless**
+1. Sign up at [emqx.io](https://www.emqx.io/)
+2. Create a serverless deployment (free tier available)
+3. Note your broker address and credentials
+4. Configure ACLs for topic restrictions
 
-## Namecheap Shared Hosting (as remote portal)
+**Alternative: Mosquitto (Self-Hosted)**
+```bash
+# Install
+sudo apt install mosquitto mosquitto-clients
 
-* Namecheap shared hosting can host a static dashboard or a small PHP/Node script.
-* Don’t expose device control endpoints directly from shared hosting — use it as a front-end that talks to the broker (MQTT over WebSocket or server-side bridge) or polls device state via broker-to-webhook.
-* For remote control through Namecheap:
+# Configure
+sudo nano /etc/mosquitto/mosquitto.conf
 
-  * Implement a server-side bridge that connects to EMQX (broker) and offers authenticated REST endpoints or websockets to your mobile web UI.
-  * Keep secrets server-side (do not hardcode broker credentials into client-side JS).
+# Add:
+listener 1883
+allow_anonymous false
+password_file /etc/mosquitto/passwd
+
+# Create user
+sudo mosquitto_passwd -c /etc/mosquitto/passwd username
+
+# Start
+sudo systemctl restart mosquitto
+```
+
+### Security Best Practices
+
+1. **Never use anonymous access** in production
+2. **Implement ACLs** to restrict topic access per device
+3. **Use TLS** for internet-exposed brokers (requires ESP-12E+ for sufficient RAM)
+4. **Rotate credentials** periodically
+5. **Monitor connection logs** for anomalies
+
+### TLS Configuration (ESP-12E+)
+
+```cpp
+// Add to main.cpp (requires more RAM than ESP-01 has)
+WiFiClientSecure espClient;
+espClient.setInsecure(); // For testing only!
+
+// Production: use certificate validation
+const char* root_ca = R"EOF(
+-----BEGIN CERTIFICATE-----
+[Your Root CA Certificate]
+-----END CERTIFICATE-----
+)EOF";
+
+espClient.setCACert(root_ca);
+```
 
 ---
 
-# Final Checklist before production
+## 📡 API Reference
 
-* [ ] Move to a bigger board (ESP12/ESP32) if you need TLS + many features.
-* [ ] Add inrush/fuse protection and mains safety.
-* [ ] Heat-test enclosure at worst-case load for 24–48 hours.
-* [ ] Validate relay lifecycle under expected load (test cycles).
-* [ ] Secure MQTT with TLS & proper certs in production (requires more RAM).
-* [ ] Plan firmware update path (OTA on larger devices).
-* [ ] Implement device-side rate-limits & watchdogs.
+### HTTP Endpoints
 
+| Endpoint | Method | Description | Response |
+|----------|--------|-------------|----------|
+| `/` | GET | Main control interface | HTML page |
+| `/on` | GET | Turn relay ON | 302 Redirect |
+| `/off` | GET | Turn relay OFF | 302 Redirect |
+| `/status` | GET | Get current state | JSON |
+| `/save` | POST | Save WiFi config | HTML |
 
+### Status Response
+
+```json
+{
+  "switch": 1,         // Device ID
+  "state": "on"        // Current state: "on" or "off"
+}
+```
+
+### Configuration Endpoint
+
+**POST `/save`**
+
+Parameters (form-encoded):
+- `ssid` (required): WiFi network name
+- `pass` (required): WiFi password
+- `host` (optional): Custom hostname
+
+Response: HTML confirmation page with auto-redirect
+
+---
+
+## 🐛 Troubleshooting
+
+### Device Won't Connect to WiFi
+
+**Symptoms**: AP mode persists, can't connect to home network
+
+**Solutions**:
+1. Verify SSID and password (case-sensitive)
+2. Check WiFi signal strength at device location
+3. Ensure router supports 2.4GHz (ESP8266 doesn't support 5GHz)
+4. Check for special characters in password
+5. Monitor serial output for connection errors
+
+```bash
+# Serial monitor should show:
+# "STA IP: 192.168.x.x" for success
+# "AP mode. Connect to: RS-xxx" for failure
+```
+
+### MQTT Not Connecting
+
+**Symptoms**: Device online but MQTT commands don't work
+
+**Solutions**:
+1. Verify broker address and port in code
+2. Check firewall rules on broker side
+3. Test broker with mosquitto client:
+   ```bash
+   mosquitto_pub -h broker.emqx.io -t test -m "hello"
+   ```
+4. Enable debug logging:
+   ```cpp
+   mqtt.setClient(espClient);
+   mqtt.setCallback(mqttCallback);
+   // Add debug:
+   Serial.println("MQTT connecting...");
+   ```
+
+### Relay Not Switching
+
+**Symptoms**: Device responds but relay doesn't click/switch
+
+**Solutions**:
+1. Check wiring diagram carefully
+2. Verify transistor orientation (E-B-C)
+3. Test relay coil voltage with multimeter
+4. Check flyback diode polarity
+5. Measure GPIO2 output (should be 3.3V when ON)
+6. Try direct connection (GPIO → Relay IN) to isolate driver issue
+
+### Memory Issues
+
+**Symptoms**: Crashes, reboots, AP not starting
+
+**Solutions**:
+1. Monitor free heap: `Serial.println(ESP.getFreeHeap());`
+2. Disable AP fallback if heap < 12KB
+3. Reduce MQTT packet size
+4. Remove unnecessary features for ESP-01
+
+### Serial Upload Fails
+
+**Symptoms**: `Failed to connect to ESP8266`
+
+**Solutions**:
+1. Hold GPIO0 LOW during power-up
+2. Check USB-TTL wiring (RX→TX, TX→RX)
+3. Verify baud rate (115200)
+4. Try different upload speeds (57600, 9600)
+5. Add 10µF capacitor across RESET and GND
+
+---
+
+## ⚠️ Safety & Legal
+
+### Electrical Safety
+
+**CRITICAL WARNINGS:**
+
+⚠️ **Mains voltage (110V/220V AC) can cause serious injury or death.**
+
+- Only qualified electricians should work with mains wiring
+- Always disconnect power before working
+- Use appropriate fuses and circuit breakers
+- Maintain proper clearance between low-voltage and high-voltage sections
+- Use proper insulation and enclosures
+- Test thoroughly before permanent installation
+- Consider using a 5V relay board with optical isolation
+
+### Compliance
+
+**This project may require:**
+- FCC certification (USA)
+- CE marking (Europe)
+- UL/CSA approval for commercial use
+- Local electrical permits
+
+**The authors assume NO liability for:**
+- Improper installation
+- Fire, shock, or property damage
+- Regulatory violations
+- Failure to follow electrical codes
+
+### Best Practices
+
+1. **Use isolation**: Optocoupler between ESP and relay coil
+2. **Add protection**: Fuses, circuit breakers, RCDs
+3. **Test first**: Dry-run with low-voltage loads
+4. **Document**: Keep wiring diagrams and test logs
+5. **Maintain**: Regular inspection of connections and enclosure
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions! Please follow these guidelines:
+
+### How to Contribute
+
+1. **Fork** the repository
+2. **Create** a feature branch: `git checkout -b feature/amazing-feature`
+3. **Commit** your changes: `git commit -m 'Add amazing feature'`
+4. **Push** to branch: `git push origin feature/amazing-feature`
+5. **Open** a Pull Request
+
+### Code Standards
+
+- Follow existing code style (2-space indentation)
+- Comment complex logic
+- Test on real hardware before submitting
+- Update documentation for new features
+- Keep commits atomic and well-described
+
+### Reporting Issues
+
+Use GitHub Issues with these templates:
+
+**Bug Report:**
+- Description
+- Steps to reproduce
+- Expected behavior
+- Actual behavior
+- Hardware: ESP-01 / ESP-12E or any from ESP MCU Family.
+- Serial output (if available)
+
+**Feature Request:**
+- Use case
+- Proposed solution
+- Alternative approaches
+- Impact on existing features
+
+---
+
+## 📄 License
+
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+
+```
+MIT License
+
+Copyright (c) 2025 BedTimeESP Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+[Full license text in LICENSE file]
+```
+
+---
+
+## 🙏 Acknowledgments
+
+- **ESP8266 Community** - For extensive documentation and support
+- **PlatformIO** - For excellent embedded development platform
+- **MQTT.org** - For IoT messaging protocol
+- **EMQX Team** - For reliable MQTT broker
+- **Arduino Core Team** - For ESP8266 Arduino framework
+
+### Libraries Used
+
+- [PubSubClient](https://github.com/knolleary/pubsubclient) by Nick O'Leary
+- [ArduinoJson](https://arduinojson.org/) by Benoît Blanchon
+- [ESP8266 Arduino Core](https://github.com/esp8266/Arduino)
+
+---
+
+## 📞 Support
+
+- **Documentation**: [Wiki](https://github.com/MBayezid/BedTimeESP/wiki)
+- **Issues**: [GitHub Issues](https://github.com/MBayezid/BedTimeESP/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/MBayezid/BedTimeESP/discussions)
+- **Email**: [musannabzyazid@gmail.com]
+
+---
+
+## 🗺️ Roadmap
+
+- [ ] Web-based OTA firmware updates
+- [ ] Multiple relay support (ESP-12E)
+- [ ] Scheduling/timers
+- [ ] Energy monitoring integration
+- [ ] MQTT discovery for Home Assistant
+- [ ] Mobile app (Android/iOS)
+- [ ] Alexa/Google Home integration
+- [ ] Temperature sensor support
+- [ ] Advanced MQTT features (QoS 2, will delay)
+
+---
+
+## 📊 Project Stats
+
+![GitHub stars](https://img.shields.io/github/stars/MBayezid/BedTimeESP?style=social)
+![GitHub forks](https://img.shields.io/github/forks/MBayezid/BedTimeESP?style=social)
+![GitHub issues](https://img.shields.io/github/issues/MBayezid/BedTimeESP)
+![GitHub pull requests](https://img.shields.io/github/issues-pr/MBayezid/BedTimeESP)
+
+---
+
+**Made with ❤️ for the IoT community**
+
+*If this project helped you, consider giving it a ⭐ on GitHub!*
