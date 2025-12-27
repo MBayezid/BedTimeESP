@@ -12,20 +12,20 @@ Transform a low-cost ESP-01 (512KB) or ESP-12E module into a production-ready Io
 
 ## 📋 Table of Contents
 
-- [Overview](#overview)
-- [Key Features](#key-features)
-- [Hardware Requirements](#hardware-requirements)
-- [Architecture](#architecture)
-- [Quick Start](#quick-start)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Usage](#usage)
-- [MQTT Integration](#mqtt-integration)
-- [API Reference](#api-reference)
+- [Overview](#-overview)
+- [Key Features](#-key-features)
+- [Hardware Requirements](#-hardware-requirements)
+- [Architecture](#-architecture)
+- [Quick Start](#-quick-start)
+- [Installation](#-installation)
+- [Configuration](#-configuration)
+- [Usage](#-usage)
+- [MQTT Integration](#-mqtt-integration)
+- [API Reference](#-api-reference)
 - [Troubleshooting](#troubleshooting)
-- [Safety & Legal](#safety--legal)
-- [Contributing](#contributing)
-- [License](#license)
+- [Safety & Legal](#-safety--legal)
+- [Contributing](#-contributing)
+- [License](#-license)
 
 ---
 
@@ -87,18 +87,18 @@ BedTimeESP is a minimal, resilient smart relay system designed for the ESP8266 p
 
 ```
 ┌─────────────────────────────────────────────────┐
-│                  Power Section                   │
-│  AC/DC 5V ─► AMS1117-3.3 ─► ESP-01 VCC         │
-│                    │                             │
+│                  Power Section                  │
+│  AC/DC 5V ─► AMS1117-3.3 ─► ESP-01 VCC          │
+│                    │                            │
 │                    └─► 10µF + 0.1µF caps        │
 └─────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────┐
-│              Relay Control Section               │
+│              Relay Control Section              │
 │  ESP GPIO2 ──[1kΩ]─► 2N2222 Base               │
 │                      Collector ─► Relay Coil─   │
 │                      Emitter ─► GND             │
-│                                                  │
+│                                                 │
 │  [1N4007 Diode across relay coil]               │
 │  Cathode (+5V) ←─ Anode (Collector)             │
 └─────────────────────────────────────────────────┘
