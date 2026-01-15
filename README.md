@@ -22,7 +22,7 @@ Transform a low-cost ESP-01 (512KB) or ESP-12E module into a production-ready Io
 - [Usage](#-usage)
 - [MQTT Integration](#-mqtt-integration)
 - [API Reference](#-api-reference)
-- [Troubleshooting](#troubleshooting)
+- [Troubleshooting](#-troubleshooting)
 - [Safety & Legal](#-safety--legal)
 - [Contributing](#-contributing)
 - [License](#-license)
@@ -699,7 +699,7 @@ furnished to do so, subject to the following conditions:
 - **Documentation**: [Wiki](https://github.com/MBayezid/BedTimeESP/wiki)
 - **Issues**: [GitHub Issues](https://github.com/MBayezid/BedTimeESP/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/MBayezid/BedTimeESP/discussions)
-- **Email**: [musannabzyazid@gmail.com]
+- **Email**: [musanna324@gmail.com]
 
 ---
 

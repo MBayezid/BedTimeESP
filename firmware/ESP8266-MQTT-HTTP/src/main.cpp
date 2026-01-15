@@ -15,44 +15,44 @@
 // ============================================================================
 // CONFIGURATION / CONSTANTS
 // ============================================================================
-#define EEPROM_SIZE 256
-#define MAGIC_ADDR  0
-#define MAGIC_VAL   0xA5
-#define HOST_ADDR   1
-#define SSID_ADDR   33
-#define PASS_ADDR   65
-#define APF_ADDR    129
-#define STATE_ADDR  130
+#define EEPROM_SIZE 256  // Total EEPROM size allocated for configuration
+#define MAGIC_ADDR  0    // Address for magic byte to check if EEPROM is initialized
+#define MAGIC_VAL   0xA5 // Magic value indicating valid configuration
+#define HOST_ADDR   1    // Start address for hostname storage
+#define SSID_ADDR   33   // Start address for WiFi SSID
+#define PASS_ADDR   65   // Start address for WiFi password
+#define APF_ADDR    129  // Address for AP fallback flag
+#define STATE_ADDR  130  // Address for last relay state
 
 // GPIO (ESP-01 supports only 0 & 2)
-static const uint8_t RELAY_PIN = 2;
+static const uint8_t RELAY_PIN = 2;  // Pin connected to the relay
 
-// MQTT
-static const char* PUB_TOPIC  = "home/switch/status";
-static const char* SUB_TOPIC  = "home/switch/control";
-static const char* LWT_TOPIC  = "home/switch/alert";
-static const char* HB_TOPIC   = "home/switch/heartbeat";
+// MQTT Broker defaults (can be overridden if needed)
+static const char* PUB_TOPIC  = "home/switch/status";  // Topic for publishing status
+static const char* SUB_TOPIC  = "home/switch/control"; // Topic for subscribing to commands
+static const char* LWT_TOPIC  = "home/switch/alert";   // Last Will and Testament topic
+static const char* HB_TOPIC   = "home/switch/heartbeat"; // Heartbeat topic
 
-char mqttServer[64] = "broker.emqx.io";
-uint16_t mqttPort    = 1883;
+char mqttServer[64] = "broker.emqx.io"; // Default MQTT broker server
+uint16_t mqttPort    = 1883;            // Default MQTT broker port
 
 // ============================================================================
 // GLOBAL STATE
 // ============================================================================
-char hostnameLocal[32] = "remoteswitch";
-char storedSSID[32]    = "";
-char storedPASS[64]    = "";
-bool apFallback         = true;
-int relayState          = 0;
+char hostnameLocal[32] = "remoteswitch"; // Default local hostname
+char storedSSID[32]    = "";             // Stored WiFi SSID
+char storedPASS[64]    = "";             // Stored WiFi password
+bool apFallback         = true;          // Flag to enable AP fallback mode
+int relayState          = 0;             // Current state of the relay (0: OFF, 1: ON)
 
-ESP8266WebServer web(80);
-WiFiClient espClient;
-PubSubClient mqtt(espClient);
+ESP8266WebServer web(80);               // Web server instance on port 80
+WiFiClient espClient;                   // WiFi client for MQTT
+PubSubClient mqtt(espClient);           // MQTT client instance
 
-unsigned long lastHeartbeat = 0;
-static const unsigned long HB_INTERVAL     = 30000UL;
-unsigned long lastStateWrite = 0;
-static const unsigned long STATE_WRITE_MIN = 5000UL; // min delay between EEPROM writes
+unsigned long lastHeartbeat = 0;                        // Timestamp of last heartbeat
+static const unsigned long HB_INTERVAL     = 30000UL;   // Heartbeat interval in ms (30 seconds)
+unsigned long lastStateWrite = 0;                       // Timestamp of last EEPROM state write
+static const unsigned long STATE_WRITE_MIN = 5000UL;    // Minimum delay between EEPROM writes (5 seconds) to prevent wear
 
 // ============================================================================
 // HTML UI (ultra-compact for flash saving)
@@ -134,31 +134,33 @@ update();
 
 </body>
 </html>
-)rawliteral";
-
+)rawliteral";  // Compact HTML for the web interface, stored in PROGMEM to save RAM
 
 // ============================================================================
 // EEPROM HELPERS
 // ============================================================================
 void eWriteStr(int addr, const char* s, int maxLen) {
+  // Write a string to EEPROM, null-terminated, up to maxLen
   int n = strlen(s);
   for (int i = 0; i < maxLen; i++)
     EEPROM.write(addr + i, (i < n) ? s[i] : 0);
 }
 
 void eReadStr(int addr, char* buf, int maxLen) {
+  // Read a null-terminated string from EEPROM into buf, up to maxLen
   for (int i = 0; i < maxLen; i++) {
     buf[i] = EEPROM.read(addr + i);
     if (buf[i] == 0) break;
   }
-  buf[maxLen - 1] = 0;
+  buf[maxLen - 1] = 0;  // Ensure null-termination
 }
 
 void loadConfig() {
+  // Initialize and load configuration from EEPROM
   EEPROM.begin(EEPROM_SIZE);
 
   if (EEPROM.read(MAGIC_ADDR) != MAGIC_VAL) {
-    // Initialize defaults
+    // First boot or corrupted: Initialize with defaults
     eWriteStr(HOST_ADDR, hostnameLocal, 32);
     eWriteStr(SSID_ADDR, "", 32);
     eWriteStr(PASS_ADDR, "", 64);
@@ -168,7 +170,7 @@ void loadConfig() {
     EEPROM.commit();
   }
 
-  // Load into RAM
+  // Load stored values into global variables
   eReadStr(HOST_ADDR, hostnameLocal, 32);
   eReadStr(SSID_ADDR, storedSSID, 32);
   eReadStr(PASS_ADDR, storedPASS, 64);
@@ -177,18 +179,20 @@ void loadConfig() {
 }
 
 void saveConfigWiFi(const char* ssid, const char* pass, const char* host) {
+  // Save WiFi configuration to EEPROM
   eWriteStr(SSID_ADDR, ssid, 32);
   eWriteStr(PASS_ADDR, pass, 64);
   eWriteStr(HOST_ADDR, host, 32);
   EEPROM.commit();
 
-  // Reload
+  // Reload the saved values into globals
   eReadStr(SSID_ADDR, storedSSID, 32);
   eReadStr(PASS_ADDR, storedPASS, 64);
   eReadStr(HOST_ADDR, hostnameLocal, 32);
 }
 
 void saveRelayState(int s) {
+  // Save relay state to EEPROM with throttling to reduce wear
   unsigned long now = millis();
   if (now - lastStateWrite < STATE_WRITE_MIN) return;
 
@@ -201,23 +205,27 @@ void saveRelayState(int s) {
 // RELAY
 // ============================================================================
 void applyRelay(int s) {
+  // Apply the relay state and persist it
   relayState = (s ? 1 : 0);
   digitalWrite(RELAY_PIN, relayState ? HIGH : LOW);
   saveRelayState(relayState);
 
 #ifdef DEBUG
-  Serial.printf("Relay -> %s\n", relayState ? "ON" : "OFF");
+  Serial.printf("Relay -> %s\n", relayState ? "ON" : "OFF");  // Debug output
 #endif
 }
 
 // ============================================================================
 // WEB HANDLERS
 // ============================================================================
-void handleRoot()      { web.send_P(200, "text/html", INDEX_HTML); }
-void handleOn()        { applyRelay(1); web.send(302, "text/plain", ""); }
-void handleOff()       { applyRelay(0); web.send(302, "text/plain", ""); }
+void handleRoot()      { web.send_P(200, "text/html", INDEX_HTML); }  // Serve the main HTML page
+
+void handleOn()        { applyRelay(1); web.send(302, "text/plain", ""); }  // Turn relay ON and redirect
+
+void handleOff()       { applyRelay(0); web.send(302, "text/plain", ""); }  // Turn relay OFF and redirect
 
 void handleStatus() {
+  // Send current relay status as JSON
   StaticJsonDocument<64> doc;
   doc["state"] = relayState ? "on" : "off";
 
@@ -227,54 +235,58 @@ void handleStatus() {
 }
 
 void handleSave() {
+  // Handle saving WiFi configuration from form POST
   String s = web.arg("ssid");
   String p = web.arg("pass");
   String h = web.arg("host");
 
   if (!s.length()) {
-    web.send(400, "text/plain", "Missing SSID");
+    web.send(400, "text/plain", "Missing SSID");  // Error if SSID missing
     return;
   }
 
   saveConfigWiFi(s.c_str(), p.c_str(), h.length() ? h.c_str() : hostnameLocal);
   web.send(200, "text/html",
            "<html><body>Saved. Rebooting..."
-           "<script>setTimeout(()=>location.reload(),1500)</script></body></html>");
+           "<script>setTimeout(()=>location.reload(),1500)</script></body></html>");  // Confirmation page
 
   delay(500);
-  ESP.restart();
+  ESP.restart();  // Restart to apply changes
 }
 
 // ============================================================================
 // MQTT HANDLING
 // ============================================================================
 void mqttCallback(char* topic, byte* payload, unsigned int len) {
+  // Callback for incoming MQTT messages
   StaticJsonDocument<128> doc;
-  if (deserializeJson(doc, payload, len)) return;
+  if (deserializeJson(doc, payload, len)) return;  // Parse failure: ignore
 
-  if (!doc["switch"].is<int>() || !doc["command"].is<const char*>()) return;
+  if (!doc["switch"].is<int>() || !doc["command"].is<const char*>()) return;  // Invalid format: ignore
 
-  if ((int)doc["switch"] != 1) return;
+  if ((int)doc["switch"] != 1) return;  // Not targeted at this switch: ignore
 
   const char* cmd = doc["command"];
-  if (!strcmp(cmd, "on"))  applyRelay(1);
-  if (!strcmp(cmd, "off")) applyRelay(0);
+  if (!strcmp(cmd, "on"))  applyRelay(1);   // Handle ON command
+  if (!strcmp(cmd, "off")) applyRelay(0);   // Handle OFF command
 }
 
 void mqttReconnect() {
+  // Attempt to reconnect to MQTT broker if disconnected
   if (mqtt.connected()) return;
 
-  String id = String("rs-") + String(ESP.getChipId(), HEX);
-  String lwt = id + " lost";
+  String id = String("rs-") + String(ESP.getChipId(), HEX);  // Unique client ID
+  String lwt = id + " lost";  // LWT payload
 
-  mqtt.setServer(mqttServer, mqttPort);
-  mqtt.setCallback(mqttCallback);
+  mqtt.setServer(mqttServer, mqttPort);  // Set broker details
+  mqtt.setCallback(mqttCallback);        // Set message callback
 
   if (!mqtt.connect(id.c_str(), nullptr, nullptr, LWT_TOPIC, 1, true, lwt.c_str()))
-    return;
+    return;  // Connection failed: exit
 
-  mqtt.subscribe(SUB_TOPIC);
+  mqtt.subscribe(SUB_TOPIC);  // Subscribe to control topic
 
+  // Publish initial status
   StaticJsonDocument<96> doc;
   doc["switch"] = 1;
   doc["state"]  = relayState ? "on" : "off";
@@ -282,59 +294,63 @@ void mqttReconnect() {
 
   char buf[96];
   size_t n = serializeJson(doc, buf);
-  mqtt.publish(PUB_TOPIC, (uint8_t*)buf, n, true);
+  mqtt.publish(PUB_TOPIC, (uint8_t*)buf, n, true);  // Publish with retain
 }
 
 // ============================================================================
 // WIFI / AP
 // ============================================================================
 String apName() {
+  // Generate unique AP name based on chip ID
   return "RS-" + String(ESP.getChipId(), HEX);
 }
 
 void startAP() {
+  // Start Access Point mode
   WiFi.mode(WIFI_AP);
-  WiFi.softAPConfig({192,168,4,1}, {192,168,4,1}, {255,255,255,0});
-  WiFi.softAP(apName().c_str(), "12345678");
+  WiFi.softAPConfig({192,168,4,1}, {192,168,4,1}, {255,255,255,0});  // AP IP config
+  WiFi.softAP(apName().c_str(), "12345678");  // SSID and password
 
 #ifdef DEBUG
-  Serial.println("AP active");
+  Serial.println("AP active");  // Debug output
 #endif
 }
 
 void tryStartSTA() {
+  // Attempt to connect in Station mode if credentials available
   if (strlen(storedSSID) < 2) return;
 
   WiFi.mode(WIFI_STA);
-  WiFi.hostname(hostnameLocal);
-  WiFi.begin(storedSSID, storedPASS);
+  WiFi.hostname(hostnameLocal);  // Set hostname
+  WiFi.begin(storedSSID, storedPASS);  // Connect to WiFi
 }
 
 // ============================================================================
 // SETUP
 // ============================================================================
 void setup() {
+  // Initialize relay pin
   pinMode(RELAY_PIN, OUTPUT);
-  digitalWrite(RELAY_PIN, LOW);
+  digitalWrite(RELAY_PIN, LOW);  // Start OFF
 
 #ifdef DEBUG
-  Serial.begin(115200);
+  Serial.begin(115200);  // Start serial for debugging
   delay(50);
-  Serial.println("Booting...");
+  Serial.println("Booting...");  // Debug boot message
 #endif
 
-  loadConfig();
-  applyRelay(relayState);
+  loadConfig();          // Load config from EEPROM
+  applyRelay(relayState);  // Restore last relay state
 
-  // Web endpoints
+  // Register web server endpoints
   web.on("/",        HTTP_GET,  handleRoot);
   web.on("/on",      HTTP_GET,  handleOn);
   web.on("/off",     HTTP_GET,  handleOff);
   web.on("/status",  HTTP_GET,  handleStatus);
   web.on("/save",    HTTP_POST, handleSave);
-  web.begin();
+  web.begin();           // Start web server
 
-  // Attempt STA (10s timeout)
+  // Attempt STA connection with 10s timeout
   bool staConnected = false;
   if (strlen(storedSSID) > 1) {
     tryStartSTA();
@@ -345,62 +361,65 @@ void setup() {
         staConnected = true;
         break;
       }
-      web.handleClient();
+      web.handleClient();  // Handle clients during connection attempt
       delay(200);
     }
   }
 
   if (!staConnected) {
+    // STA failed: Start AP only
     startAP();
 #ifdef DEBUG
-    Serial.println("STA failed -> AP only");
+    Serial.println("STA failed -> AP only");  // Debug output
 #endif
   } else {
+    // STA success: Log IP and start services
 #ifdef DEBUG
-    Serial.print("STA IP: "); Serial.println(WiFi.localIP());
+    Serial.print("STA IP: "); Serial.println(WiFi.localIP());  // Debug IP
 #endif
 
-    MDNS.begin(hostnameLocal);
+    MDNS.begin(hostnameLocal);  // Start mDNS for .local discovery
 
     if (apFallback && ESP.getFreeHeap() > 12000)
-        startAP();
+        startAP();  // Start AP in fallback if heap allows
   }
 
-  mqtt.setClient(espClient);
+  mqtt.setClient(espClient);  // Set MQTT client
 }
 
 // ============================================================================
 // LOOP
 // ============================================================================
 void loop() {
+  // Main loop: Handle web and MQTT
   web.handleClient();
 
   if (WiFi.status() == WL_CONNECTED) {
-    if (!mqtt.connected()) mqttReconnect();
-    else mqtt.loop();
+    if (!mqtt.connected()) mqttReconnect();  // Reconnect MQTT if needed
+    else mqtt.loop();                        // Process MQTT messages
   }
 
-  // Heartbeat
+  // Send periodic heartbeat if connected
   if (millis() - lastHeartbeat > HB_INTERVAL) {
     if (mqtt.connected()) {
       StaticJsonDocument<80> doc;
       doc["id"] = String(ESP.getChipId(), HEX);
-      doc["uptime"] = millis() / 1000;
+      doc["uptime"] = millis() / 1000;  // Uptime in seconds
 
       char buf[80];
       size_t n = serializeJson(doc, buf);
-      mqtt.publish(HB_TOPIC, (uint8_t*)buf, n, true);
+      mqtt.publish(HB_TOPIC, (uint8_t*)buf, n, true);  // Publish heartbeat
     }
     lastHeartbeat = millis();
   }
 
-  // Disable AP fallback if heap is too low
+  // Disable AP if heap is low to free resources
   if (apFallback && ESP.getFreeHeap() < 10000) {
     apFallback = false;
     EEPROM.write(APF_ADDR, 0);
     EEPROM.commit();
-    WiFi.softAPdisconnect(true);
+    WiFi.softAPdisconnect(true);  // Disconnect AP
   }
 
-  delay(2);
+  delay(2);  // Short delay for stability
 }
