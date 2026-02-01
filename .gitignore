@@ -9,3 +9,6 @@ BedTimeESP.code-workspace
 *.map
 .DS_Store
 Thumbs.db
+
+.prject_context.md
+firmware/ESP8266-MQTT-HTTP/project_context.md
