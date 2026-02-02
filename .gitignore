@@ -12,3 +12,8 @@ Thumbs.db
 
 .prject_context.md
 firmware/ESP8266-MQTT-HTTP/project_context.md
+examples/pubSubTesting.py
+firmware/ESP8266-MQTT-HTTP/src/user_guide.md
+examples/BedTimeESP-example.code-workspace
+firmware/ESP8266-MQTT-HTTP/ESP8266-MQTT-HTTP.code-workspace
+firmware/ESP8266-MQTT-HTTP/src/project_context.md
