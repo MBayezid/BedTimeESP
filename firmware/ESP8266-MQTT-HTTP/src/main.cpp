@@ -77,7 +77,7 @@ void applyRelay(uint8_t state) {
 }
 void publishState() {
   if (!mqtt.connected()) return;
-  StaticJsonDocument<192> doc; // Increased buffer
+  JsonDocument doc; // Increased buffer
   doc["switch"] = 1;
   doc["state"] = config.last_state ? "on" : "off";
   doc["heap"] = ESP.getFreeHeap();
@@ -89,9 +89,9 @@ void publishState() {
 }
 void mqttCallback(char* topic, byte* payload, unsigned int len) {
   if (strcmp(topic, config.sub_topic) != 0) return;
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   if (deserializeJson(doc, payload, len)) return;
-  if (doc.containsKey("command")) {
+  if (doc["command"].is<const char*>()) {
     const char* cmd = doc["command"];
     if (!strcmp(cmd, "on")) applyRelay(1);
     else if (!strcmp(cmd, "off")) applyRelay(0);
@@ -198,7 +198,7 @@ void setup() {
   server.on("/", handleRoot);
   server.on("/save", HTTP_POST, handleSave);
   server.on("/status", [](){
-      StaticJsonDocument<128> doc;
+      JsonDocument doc;
       doc["state"] = config.last_state ? "on" : "off";
       doc["heap"] = ESP.getFreeHeap();
       doc["ap_disabled"] = apDisabledByGuard;
